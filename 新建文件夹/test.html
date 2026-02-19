@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>功能测试页面</title>
+</head>
+<body>
+    <h1>SonicSense AI 功能测试</h1>
+
+    <h2>视频测试</h2>
+    <video id="testVideo" controls width="400">
+        <source src="https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4" type="video/mp4">
+        您的浏览器不支持 video 标签。
+    </video>
+
+    <h2>音频测试</h2>
+    <audio id="testAudio" controls>
+        <source src="https://www.soundjay.com/misc/sounds/bell-ringing-05.wav" type="audio/wav">
+        您的浏览器不支持 audio 标签。
+    </audio>
+
+    <h2>控制台日志</h2>
+    <div id="logs" style="background: #f0f0f0; padding: 10px; height: 200px; overflow-y: auto; font-family: monospace;"></div>
+
+    <script>
+        // 简单的日志记录
+        const logsDiv = document.getElementById('logs');
+        function log(message) {
+            const timestamp = new Date().toLocaleTimeString();
+            logsDiv.innerHTML += `[${timestamp}] ${message}<br>`;
+            logsDiv.scrollTop = logsDiv.scrollHeight;
+            console.log(message);
+        }
+
+        log('测试页面加载完成');
+
+        // 监听视频事件
+        const video = document.getElementById('testVideo');
+        video.addEventListener('loadstart', () => log('视频开始加载'));
+        video.addEventListener('play', () => log('视频开始播放'));
+        video.addEventListener('pause', () => log('视频暂停'));
+        video.addEventListener('ended', () => log('视频播放结束'));
+
+        // 监听音频事件
+        const audio = document.getElementById('testAudio');
+        audio.addEventListener('loadstart', () => log('音频开始加载'));
+        audio.addEventListener('play', () => log('音频开始播放'));
+        audio.addEventListener('pause', () => log('音频暂停'));
+        audio.addEventListener('ended', () => log('音频播放结束'));
+
+        // 检查扩展是否注入
+        setTimeout(() => {
+            log('检查扩展注入...');
+            if (window.chrome && chrome.runtime) {
+                log('Chrome 扩展 API 可用');
+            } else {
+                log('Chrome 扩展 API 不可用');
+            }
+        }, 1000);
+    </script>
+</body>
+</html>
