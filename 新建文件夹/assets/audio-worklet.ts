@@ -136,34 +136,137 @@ class SonicSenseProcessor extends AudioWorkletProcessor {
   }
 
   /**
-   * 提取 MFCC 特征 (简化版本)
+   * 提取 MFCC 特征 (标准版)
+   * 流程: Pre-emphasis → Framing → Hamming → FFT → Mel Filterbank → Log → DCT-II
    */
-  private extractMFCC(spectrum: Float32Array): Float32Array {
-    // 简化的 MFCC 提取
-    // 实际应用中应该使用完整的 MFCC 算法
-    const melFilters = 8;
-    const melEnergies = new Float32Array(melFilters);
-    
-    // 应用 Mel 滤波器组
-    for (let i = 0; i < melFilters; i++) {
-      const start = Math.floor(i * spectrum.length / melFilters);
-      const end = Math.floor((i + 1) * spectrum.length / melFilters);
-      let sum = 0;
-      for (let j = start; j < end && j < spectrum.length; j++) {
-        sum += spectrum[j];
-      }
-      melEnergies[i] = Math.log(sum + 1e-10);
+  private extractMFCC(inputSignal: Float32Array, sampleRate: number = 44100): Float32Array {
+    const frameSize = Math.floor(0.025 * sampleRate); // 25ms
+    const hopSize = Math.floor(0.01 * sampleRate);    // 10ms
+    const nFilters = 26;
+    const nCoeffs = 13;
+
+    // 1. Pre-emphasis
+    const preEmphasized = new Float32Array(inputSignal.length);
+    preEmphasized[0] = inputSignal[0];
+    for (let i = 1; i < inputSignal.length; i++) {
+      preEmphasized[i] = inputSignal[i] - 0.97 * inputSignal[i - 1];
     }
-    
-    // 简化的 DCT (只计算前 13 个系数)
-    for (let i = 0; i < 13; i++) {
-      let sum = 0;
-      for (let j = 0; j < melFilters; j++) {
-        sum += melEnergies[j] * Math.cos((Math.PI * i * (j + 0.5)) / melFilters);
-      }
-      this.mfccFeatures[i] = sum * Math.sqrt(2 / melFilters);
+
+    // 2. Framing & Hamming window (use last frame for real-time)
+    let frameStart = Math.max(0, inputSignal.length - frameSize);
+    const frame = new Float32Array(frameSize);
+    for (let i = 0; i < frameSize; i++) {
+      const idx = frameStart + i;
+      const win = idx < inputSignal.length 
+        ? 0.54 - 0.46 * Math.cos((2 * Math.PI * i) / (frameSize - 1))
+        : 0;
+      frame[i] = (idx < inputSignal.length ? preEmphasized[idx] : 0) * win;
     }
-    
+
+    // 3. FFT (Radix-2, in-place complex)
+    const nFFT = 256;
+    const fftInput = new Float32Array(nFFT * 2);
+    for (let i = 0; i < frameSize; i++) {
+      fftInput[2 * i] = frame[i];
+      fftInput[2 * i + 1] = 0;
+    }
+    for (let i = frameSize; i < nFFT; i++) {
+      fftInput[2 * i] = 0;
+      fftInput[2 * i + 1] = 0;
+    }
+
+    // Bit-reversal
+    let j = 0;
+    for (let i = 1; i < nFFT; i++) {
+      let bit = nFFT >> 1;
+      while (j & bit) {
+        j ^= bit;
+        bit >>= 1;
+      }
+      j ^= bit;
+      if (i < j) {
+        [fftInput[2 * i], fftInput[2 * j]] = [fftInput[2 * j], fftInput[2 * i]];
+        [fftInput[2 * i + 1], fftInput[2 * j + 1]] = [fftInput[2 * j + 1], fftInput[2 * i + 1]];
+      }
+    }
+
+    // Butterfly
+    for (let s = 2; s <= nFFT; s *= 2) {
+      const m = s / 2;
+      const theta = -2 * Math.PI / s;
+      for (let k = 0; k < m; k++) {
+        const wRe = Math.cos(k * theta);
+        const wIm = Math.sin(k * theta);
+        for (let i = k; i < nFFT; i += s) {
+          const i2 = i + m;
+          const tRe = wRe * fftInput[2 * i2] - wIm * fftInput[2 * i2 + 1];
+          const tIm = wRe * fftInput[2 * i2 + 1] + wIm * fftInput[2 * i2];
+          fftInput[2 * i2] = fftInput[2 * i] - tRe;
+          fftInput[2 * i2 + 1] = fftInput[2 * i + 1] - tIm;
+          fftInput[2 * i] += tRe;
+          fftInput[2 * i + 1] += tIm;
+        }
+      }
+    }
+
+    // Power Spectrum
+    const powerSpectrum = new Float32Array(nFFT);
+    for (let i = 0; i < nFFT; i++) {
+      const re = fftInput[2 * i];
+      const im = fftInput[2 * i + 1];
+      powerSpectrum[i] = re * re + im * im;
+    }
+
+    // 4. Mel Filterbank (26 filters, 0-8000Hz)
+    const filters: Float32Array[] = [];
+    const lowFreq = 0;
+    const highFreq = sampleRate / 2;
+    const melLow = 2595 * Math.log10(1 + lowFreq / 700);
+    const melHigh = 2595 * Math.log10(1 + highFreq / 700);
+    const melStep = (melHigh - melLow) / (nFilters + 1);
+
+    for (let i = 1; i <= nFilters; i++) {
+      const centerMel = melLow + i * melStep;
+      const centerFreq = 700 * (Math.pow(10, centerMel / 2595) - 1);
+      const leftMel = centerMel - melStep;
+      const rightMel = centerMel + melStep;
+      const leftFreq = 700 * (Math.pow(10, leftMel / 2595) - 1);
+      const rightFreq = 700 * (Math.pow(10, rightMel / 2595) - 1);
+
+      const filter = new Float32Array(nFFT);
+      const leftBin = Math.max(0, Math.floor(leftFreq / (sampleRate / nFFT)));
+      const centerBin = Math.floor(centerFreq / (sampleRate / nFFT));
+      const rightBin = Math.min(nFFT - 1, Math.floor(rightFreq / (sampleRate / nFFT)));
+
+      for (let k = leftBin; k <= centerBin; k++) {
+        filter[k] = (k - leftBin) / (centerBin - leftBin + 1e-10);
+      }
+      for (let k = centerBin + 1; k <= rightBin; k++) {
+        filter[k] = (rightBin - k) / (rightBin - centerBin + 1e-10);
+      }
+      filters.push(filter);
+    }
+
+    // 5. Filter energies & log
+    const filterEnergies = new Float32Array(nFilters);
+    for (let i = 0; i < nFilters; i++) {
+      let sum = 0;
+      for (let j = 0; j < nFFT; j++) {
+        sum += filters[i][j] * powerSpectrum[j];
+      }
+      filterEnergies[i] = Math.log(sum + 1e-10);
+    }
+
+    // 6. DCT-II (13 coefficients)
+    for (let k = 0; k < nCoeffs; k++) {
+      let sum = 0;
+      for (let n = 0; n < nFilters; n++) {
+        sum += filterEnergies[n] * Math.cos(Math.PI * k * (2 * n + 1) / (2 * nFilters));
+      }
+      this.mfccFeatures[k] = sum * Math.sqrt(2 / nFilters);
+      if (k === 0) this.mfccFeatures[k] *= Math.SQRT1_2;
+    }
+
     return this.mfccFeatures;
   }
 
@@ -276,8 +379,9 @@ class SonicSenseProcessor extends AudioWorkletProcessor {
 
       // 6. 声纹特征提取
       if (this.voicePrintEnabled) {
-        const mfcc = this.extractMFCC(this.spectrum);
+        const mfcc = this.extractMFCC(inputChannel, sampleRate);
         this.pitchEstimate = this.estimatePitch(inputChannel, sampleRate);
+        // 重计算 energyBands from power spectrum (optional, for now reuse old)
         this.energyBands = this.computeEnergyBands(this.spectrum);
         this.updateVoicePrint(mfcc);
 

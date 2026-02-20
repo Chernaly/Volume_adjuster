@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>WebGPU FFT PoC</title>
+  <style>
+    body { font-family: sans-serif; padding: 20px; }
+    #result { margin-top: 20px; }
+    pre { background: #f4f4f4; padding: 10px; overflow-x: auto; }
+  </style>
+</head>
+<body>
+  <h1>WebGPU FFT PoC</h1>
+  <p>验证 WebGPU 是否可用于加速音频特征提取中的 FFT 计算。</p>
+  <button id="run">Run FFT (256 points)</button>
+  <div id="result"></div>
+  <script src="./webgpu-fft.ts" type="module"></script>
+</body>
+</html>

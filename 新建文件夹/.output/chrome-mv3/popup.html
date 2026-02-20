@@ -352,12 +352,18 @@
       color: var(--text-secondary);
     }
   </style>
-  <script type="module" crossorigin src="/chunks/popup-DW1KdFkO.js"></script>
+  <script type="module" crossorigin src="/chunks/popup-CrK32v85.js"></script>
   <link rel="modulepreload" crossorigin href="/chunks/_virtual_wxt-html-plugins-DPbbfBKe.js">
 </head>
 <body>
   <div id="app">
     <!-- 交互面板 (音量条、状态显示) -->
+    <div class="actions-section">
+      <button class="control-btn" id="start-btn" data-action="init">▶ 开始处理</button>
+      <button class="control-btn disabled" id="stop-btn" data-action="stop">⏹ 停止</button>
+      <button class="control-btn" id="calibrate-btn" data-action="calibrate">🎯 声纹校准</button>
+      <button class="control-btn settings" id="settings-btn" data-action="open-settings">⚙ 设置</button>
+    </div>
   </div>
 </body>
 </html>
