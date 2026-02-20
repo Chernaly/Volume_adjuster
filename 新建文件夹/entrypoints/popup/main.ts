@@ -73,12 +73,24 @@ function sendMessage(message: Message): Promise<any> {
   });
 }
 
+// 初始化 AudioContext（必须由用户交互触发）
+async function initAudioContext() {
+  try {
+    await sendMessage({ type: 'init_audio_context' });
+    console.log('Sent init_audio_context request');
+  } catch (error) {
+    console.error('Failed to init audio context:', error);
+  }
+}
+
 // 开始/停止处理
 async function toggleProcessing() {
   if (state.status === 'processing') {
     await sendMessage({ type: 'play_control', action: 'stop' });
   } else {
-    // 请求 content script 开始捕获音频流
+    // 先初始化 AudioContext（用户交互上下文）
+    await initAudioContext();
+    // 再请求开始处理
     await sendMessage({ type: 'play_control', action: 'start' });
   }
 }

@@ -113,22 +113,23 @@ export default {
               capturedStreams.delete(streamId);
             } else {
               console.log('Audio stream sent successfully:', streamId);
-              
+
               // 发送流开始消息
               const startedMessage: AudioStreamStartedMessage = {
                 type: 'audio_stream_started',
                 streamId,
                 timestamp: Date.now()
               };
-              chrome.runtime.sendMessage(startledMessage).catch(console.error);
+              chrome.runtime.sendMessage(startedMessage).catch(console.error);
             }
           });
         } else {
           console.warn(`captureStream not supported for media element ${index}`);
+          fallbackCaptureStream(element, index);
         }
       } catch (error) {
         console.error(`Error capturing audio stream for media element ${index}:`, error);
-        
+
         // 处理常见异常
         if (error instanceof DOMException) {
           switch (error.name) {
@@ -145,6 +146,7 @@ export default {
               console.error('DOM exception:', error.message);
           }
         }
+        fallbackCaptureStream(element, index);
       }
     };
 
@@ -154,7 +156,7 @@ export default {
         if (captured.element === element) {
           // 停止流的所有轨道
           captured.stream.getTracks().forEach(track => track.stop());
-          
+
           // 发送流停止消息
           const message: AudioStreamStoppedMessage = {
             type: 'audio_stream_stopped',
@@ -162,7 +164,7 @@ export default {
             timestamp: Date.now()
           };
           chrome.runtime.sendMessage(message).catch(console.error);
-          
+
           // 从映射中删除
           capturedStreams.delete(streamId);
           console.log(`Stopped capture for stream: ${streamId}`);
@@ -171,11 +173,40 @@ export default {
       }
     };
 
+    // Fallback: 当 captureStream 失败时，发送 fallback 消息（不创建真实流，由 offscreen 处理）
+    const fallbackCaptureStream = (
+      element: HTMLVideoElement | HTMLAudioElement,
+      index: number
+    ) => {
+      const streamId = `fallback_${index}_${Date.now()}`;
+      const fallbackMessage = {
+        type: 'audio_stream_fallback',
+        streamId,
+        elementTag: element.tagName,
+        src: element.src || 'dynamic',
+        timestamp: Date.now()
+      };
+
+      chrome.runtime.sendMessage(fallbackMessage, (response) => {
+        if (chrome.runtime.lastError) {
+          console.error('Failed to send fallback message:', chrome.runtime.lastError);
+        } else {
+          console.log('Fallback message sent:', streamId);
+          // 仅记录，不存储真实流（避免空流问题）
+          capturedStreams.set(streamId, {
+            streamId,
+            stream: new MediaStream(), // 空流占位
+            element
+          });
+        }
+      });
+    };
+
     // 扫描页面中的媒体元素
     const scanMediaElements = () => {
       const videos = document.querySelectorAll('video');
       const audios = document.querySelectorAll('audio');
-      
+
       console.log(`Found ${videos.length} video elements and ${audios.length} audio elements`);
 
       videos.forEach((video, index) => {
@@ -193,7 +224,7 @@ export default {
     // 使用 MutationObserver 监听动态添加的媒体元素
     const observer = new MutationObserver((mutations) => {
       let shouldRescan = false;
-      
+
       for (const mutation of mutations) {
         if (mutation.addedNodes.length > 0) {
           for (const node of mutation.addedNodes) {
@@ -204,7 +235,7 @@ export default {
           }
         }
       }
-      
+
       if (shouldRescan) {
         // 延迟扫描以确保元素完全初始化
         setTimeout(scanMediaElements, 100);
@@ -217,7 +248,14 @@ export default {
     });
 
     // 定期重新扫描（处理某些 SPA 应用）
-    setInterval(scanMediaElements, 5000);
+    const scanInterval = setInterval(scanMediaElements, 5000);
+
+    // 清理：卸载时清除定时器和 observer
+    self.addEventListener('unload', () => {
+      clearInterval(scanInterval);
+      observer.disconnect();
+      console.log('Content script unloaded, cleanup done');
+    });
 
     console.log('Content Script ready, monitoring for media elements');
   },
